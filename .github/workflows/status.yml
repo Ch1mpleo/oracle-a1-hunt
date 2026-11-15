@@ -7,8 +7,6 @@ on:
   schedule:
     - cron: "0 1 * * *" # 08:00 Asia/Saigon
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
