@@ -94,7 +94,7 @@ jobs:
             echo ""
             echo "SSH: \`ssh -i ~/.ssh/openbot_vps ubuntu@$IP\`"
             echo ""
-            echo "Next: install OpenBot on the VPS, then stop this workflow and the Windows task \`OpenBot Oracle VPS retry\`."
+            echo "Next: install OpenBot on the VPS, then disable both workflows in the Actions tab."
           } > body.md
           gh issue create --title "Oracle A1 instance is up: ${IP:-pending ip}" --body-file body.md
 
@@ -147,16 +147,10 @@ jobs:
             -H "x-openbot-signature: $SIG" \
             --data-binary "$BODY"
 
-      - name: Report a real error
+      - name: Fail loudly on a real error
         if: steps.cred.outputs.ready == 'true' && steps.hunt.outputs.error != ''
         env:
-          GH_TOKEN: ${{ github.token }}
           ERR: ${{ steps.hunt.outputs.error }}
         run: |
-          open_errors=$(gh issue list --state open --search 'in:title "Oracle hunt error"' --json number --jq 'length')
-          if [ "$open_errors" -gt 0 ]; then
-            echo "An open error issue already exists; not filing another."
-            exit 0
-          fi
-          printf '%s\n' "The 15-minute hunt is failing before it can attempt a launch." "" '```' "$ERR" '```' > body.md
-          gh issue create --title "Oracle hunt error" --body-file body.md
+          echo "::error::${ERR}"
+          exit 1

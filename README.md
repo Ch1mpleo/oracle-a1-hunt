@@ -19,11 +19,15 @@ catch it. This repo is that API loop.
 
 ## How it notifies you
 
-1. **GitHub issue** mentioning `@Ch1mpleo` — that produces an email and a phone
-   notification through the GitHub app, with the public IP. No setup needed.
-2. **Chat message from OpenBot**, if `OPENBOT_WEBHOOK_URL` and
-   `OPENBOT_WEBHOOK_SECRET` are set. The request is signed with
-   HMAC-SHA256 over `<timestamp>.<delivery-id>.<body>`.
+1. **Daily status comment** on the pinned issue `Oracle hunt status`, at 08:00
+   Saigon time. It arrives whether or not capacity was found, so silence means
+   the loop itself broke.
+2. **GitHub issue** mentioning `@Ch1mpleo` when the instance is up, with the
+   public IP. That produces an email and a GitHub-app notification.
+3. **Chat message from OpenBot**, if `OPENBOT_WEBHOOK_SECRET` is set. The request
+   is signed with HMAC-SHA256 over `<timestamp>.<delivery-id>.<body>`.
+4. **A failed run** exits non-zero, so GitHub's own failure notification fires.
+   A green run only means the attempt reached Oracle; `no capacity` is normal.
 
 ## Secrets
 
