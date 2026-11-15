@@ -16,23 +16,24 @@ def main():
     runs = json.load(open(sys.argv[1], encoding="utf-8"))
     cutoff = datetime.now(timezone.utc) - WINDOW
     recent = sorted((r for r in runs if when(r) >= cutoff), key=when)
+    done = [r for r in recent if r.get("conclusion")]
 
-    ok = [r for r in recent if r.get("conclusion") == "success"]
-    bad = [r for r in recent if r.get("conclusion") not in (None, "success")]
-    latest = recent[-1] if recent else None
+    ok = [r for r in done if r.get("conclusion") == "success"]
+    bad = [r for r in done if r.get("conclusion") != "success"]
+    latest = done[-1] if done else None
 
-    if not recent:
-        headline = "**No runs in 24 hours.** The schedule may be disabled."
+    if not done:
+        headline = "**No completed runs in 24 hours.** The schedule may be disabled."
     elif bad:
-        headline = f"**{len(bad)} of {len(recent)} runs failed.**"
+        headline = f"**{len(bad)} of {len(done)} runs failed.**"
     else:
-        headline = f"Running normally — {len(recent)} attempts in 24 hours, no capacity yet."
+        headline = f"Running normally — {len(done)} attempts in 24 hours, no capacity yet."
 
     print(headline)
     print()
     print("| | |")
     print("|---|---|")
-    print(f"| Attempts, last 24 h | {len(recent)} |")
+    print(f"| Attempts, last 24 h | {len(done)} |")
     print(f"| Failed runs | {len(bad)} |")
     if latest is not None:
         print(f"| Last run | {when(latest).strftime('%H:%M UTC')} — {latest.get('conclusion')} |")
