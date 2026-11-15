@@ -1,0 +1,27 @@
+name: Keep the schedule awake
+
+# GitHub disables scheduled workflows after 60 days without repo activity.
+# One weekly commit keeps the hunt running unattended.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Touch status.txt
+        run: date -u +"%Y-%m-%dT%H:%M:%SZ heartbeat" > status.txt
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add status.txt
+          git commit -m "chore: weekly keepalive" || exit 0
+          git push

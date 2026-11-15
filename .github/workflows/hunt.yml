@@ -1,0 +1,146 @@
+name: Oracle A1 hunt
+
+# Every 15 minutes GitHub's servers try once for Ampere A1 capacity in
+# ap-singapore-1. No laptop needed. Costs nothing on a public repo.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: oracle-a1-hunt
+  cancel-in-progress: false
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install OCI SDK
+        run: pip install --quiet -r requirements.txt
+
+      - name: Attempt launch
+        id: hunt
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: python hunt.py
+
+      - name: Summarize
+        run: |
+          {
+            echo "### Oracle A1 hunt"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| claimed | ${{ steps.hunt.outputs.claimed }} |"
+            echo "| public IP | ${{ steps.hunt.outputs.ip }} |"
+            echo "| availability domain | ${{ steps.hunt.outputs.ad }} |"
+            echo "| error | ${{ steps.hunt.outputs.error }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue with the IP
+        if: steps.hunt.outputs.claimed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IP: ${{ steps.hunt.outputs.ip }}
+          AD: ${{ steps.hunt.outputs.ad }}
+          IID: ${{ steps.hunt.outputs.instance_id }}
+          ADOPTED: ${{ steps.hunt.outputs.adopted }}
+        run: |
+          if [ "$ADOPTED" = "true" ]; then
+            MODE="picked up an instance launched earlier"
+          else
+            MODE="launched by this run"
+          fi
+          {
+            echo "@Ch1mpleo the free Ampere A1 instance is up."
+            echo ""
+            echo "- Instance: \`$IID\`"
+            echo "- Availability domain: \`$AD\`"
+            echo "- Public IP: \`${IP:-pending, a later run fills this in}\`"
+            echo "- Source: $MODE"
+            echo ""
+            echo "SSH: \`ssh -i ~/.ssh/openbot_vps ubuntu@$IP\`"
+            echo ""
+            echo "Next: install OpenBot on the VPS, then stop this workflow and the Windows task \`OpenBot Oracle VPS retry\`."
+          } > body.md
+          gh issue create --title "Oracle A1 instance is up: ${IP:-pending ip}" --body-file body.md
+
+      - name: Ping OpenBot
+        if: steps.hunt.outputs.claimed == 'true'
+        env:
+          WH_URL: ${{ secrets.OPENBOT_WEBHOOK_URL }}
+          WH_SECRET: ${{ secrets.OPENBOT_WEBHOOK_SECRET }}
+          IP: ${{ steps.hunt.outputs.ip }}
+          AD: ${{ steps.hunt.outputs.ad }}
+          IID: ${{ steps.hunt.outputs.instance_id }}
+        run: |
+          if [ -z "$WH_URL" ] || [ -z "$WH_SECRET" ]; then
+            echo "OpenBot webhook secrets not set; skipping chat notification."
+            exit 0
+          fi
+          export BODY
+          BODY=$(python - <<'PY'
+          import json, os
+          print(json.dumps({
+              "type": "vps.claimed",
+              "data": {
+                  "ip": os.environ.get("IP", ""),
+                  "ad": os.environ.get("AD", ""),
+                  "instance_id": os.environ.get("IID", ""),
+                  "ssh_user": "ubuntu",
+              },
+          }))
+          PY
+          )
+          export BODY TS DID
+          TS=$(date +%s)
+          DID="a1-${IID}"
+          SIG=$(python - "$TS" "$DID" <<'PY'
+          import hashlib, hmac, os, sys
+          ts, did = sys.argv[1], sys.argv[2]
+          body = os.environ["BODY"]
+          print("sha256=" + hmac.new(
+              os.environ["WH_SECRET"].encode(),
+              f"{ts}.{did}.{body}".encode(),
+              hashlib.sha256,
+          ).hexdigest())
+          PY
+          )
+          curl -sS -o /dev/null -w "OpenBot webhook HTTP %{http_code}\n" \
+            -X POST "$WH_URL" \
+            -H "Content-Type: application/json" \
+            -H "x-openbot-timestamp: $TS" \
+            -H "x-openbot-delivery-id: $DID" \
+            -H "x-openbot-signature: $SIG" \
+            --data-binary "$BODY"
+
+      - name: Report a real error
+        if: steps.hunt.outputs.error != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ERR: ${{ steps.hunt.outputs.error }}
+        run: |
+          open_errors=$(gh issue list --state open --search 'in:title "Oracle hunt error"' --json number --jq 'length')
+          if [ "$open_errors" -gt 0 ]; then
+            echo "An open error issue already exists; not filing another."
+            exit 0
+          fi
+          printf '%s\n' "The 15-minute hunt is failing before it can attempt a launch." "" '```' "$ERR" '```' > body.md
+          gh issue create --title "Oracle hunt error" --body-file body.md
