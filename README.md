@@ -29,15 +29,15 @@ catch it. This repo is that API loop.
 
 Set under *Settings → Secrets and variables → Actions*:
 
-| Secret | Where it comes from |
-|---|---|
-| `OCI_TENANCY` | OCI console, tenancy OCID |
-| `OCI_USER` | OCI console, user OCID |
-| `OCI_FINGERPRINT` | the API key fingerprint, `1a:6b:...` |
-| `OCI_REGION` | `ap-singapore-1` |
-| `OCI_PRIVATE_KEY` | full PEM text of the API signing key |
-| `OPENBOT_WEBHOOK_URL` | optional, the routine's URL |
-| `OPENBOT_WEBHOOK_SECRET` | optional, the signing secret |
+| Secret | Required | What it is |
+|---|---|---|
+| `OCI_PRIVATE_KEY` | yes | full PEM text of the OCI API signing key |
+| `OPENBOT_WEBHOOK_SECRET` | no | signing secret for the chat notification |
+
+The tenancy, user, fingerprint, and region are in the workflow as plain values.
+Oracle OCIDs identify a resource but do not grant access to it; the key is the
+only credential. Until `OCI_PRIVATE_KEY` exists, each run no-ops with a warning
+instead of failing.
 
 ## Turning it off
 

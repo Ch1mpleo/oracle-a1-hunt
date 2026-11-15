@@ -31,17 +31,31 @@ jobs:
       - name: Install OCI SDK
         run: pip install --quiet -r requirements.txt
 
+      - name: Check credentials
+        id: cred
+        env:
+          KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::OCI_PRIVATE_KEY is not set; this run did nothing."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Attempt launch
         id: hunt
+        if: steps.cred.outputs.ready == 'true'
         env:
-          OCI_USER: ${{ secrets.OCI_USER }}
-          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
-          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_USER: ocid1.user.oc1..aaaaaaaafygvnt4sdlfteihlnun64jab2jw3vb7oln2jirzq4a4hqywr752a
+          OCI_TENANCY: ocid1.tenancy.oc1..aaaaaaaanzc3t5z4ecubjgo37oyi2m5sbxj3c5gjwejjunm4sh6foclgntja
+          OCI_FINGERPRINT: 1a:6b:c6:05:ce:57:29:23:79:44:23:6d:4f:0e:5f:9e
+          OCI_REGION: ap-singapore-1
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
         run: python hunt.py
 
       - name: Summarize
+        if: steps.cred.outputs.ready == 'true'
         run: |
           {
             echo "### Oracle A1 hunt"
@@ -55,7 +69,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open an issue with the IP
-        if: steps.hunt.outputs.claimed == 'true'
+        if: steps.cred.outputs.ready == 'true' && steps.hunt.outputs.claimed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           IP: ${{ steps.hunt.outputs.ip }}
@@ -83,9 +97,9 @@ jobs:
           gh issue create --title "Oracle A1 instance is up: ${IP:-pending ip}" --body-file body.md
 
       - name: Ping OpenBot
-        if: steps.hunt.outputs.claimed == 'true'
+        if: steps.cred.outputs.ready == 'true' && steps.hunt.outputs.claimed == 'true'
         env:
-          WH_URL: ${{ secrets.OPENBOT_WEBHOOK_URL }}
+          WH_URL: ${{ secrets.OPENBOT_WEBHOOK_URL || 'https://signal.openbot.run/v1/webhooks/7c4e8e3a-03ac-4f1e-b6b2-d9fc6c57111b' }}
           WH_SECRET: ${{ secrets.OPENBOT_WEBHOOK_SECRET }}
           IP: ${{ steps.hunt.outputs.ip }}
           AD: ${{ steps.hunt.outputs.ad }}
@@ -132,7 +146,7 @@ jobs:
             --data-binary "$BODY"
 
       - name: Report a real error
-        if: steps.hunt.outputs.error != ''
+        if: steps.cred.outputs.ready == 'true' && steps.hunt.outputs.error != ''
         env:
           GH_TOKEN: ${{ github.token }}
           ERR: ${{ steps.hunt.outputs.error }}
