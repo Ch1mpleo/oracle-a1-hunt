@@ -1,11 +1,16 @@
-name: Daily status
+name: Hunt status
 
-# One comment a day on the "Oracle hunt status" issue: proof the loop is alive
-# even when every attempt finds no capacity. Silence means something broke.
+# A comment on every scheduled report, and on changes to this job: proof the
+# loop is alive even when every attempt finds no capacity. Silence means the
+# schedule broke.
 
 on:
   schedule:
-    - cron: "0 1 * * *" # 08:00 Asia/Saigon
+    - cron: "0 1,7,13 * * *" # 08:00, 14:00, 20:00 Asia/Saigon
+  push:
+    paths:
+      - .github/workflows/status.yml
+      - status.py
   workflow_dispatch:
 
 permissions:

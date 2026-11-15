@@ -1,5 +1,7 @@
 # Oracle A1 hunt
 
+[![hunt](https://github.com/Ch1mpleo/oracle-a1-hunt/actions/workflows/hunt.yml/badge.svg)](https://github.com/Ch1mpleo/oracle-a1-hunt/actions/workflows/hunt.yml)
+
 Tries to claim an Oracle Always Free Ampere A1 instance in `ap-singapore-1`
 every 15 minutes, from GitHub Actions.
 
@@ -10,7 +12,10 @@ every 15 minutes, from GitHub Actions.
 
 ## Notifications
 
-- Daily status comment on the `Oracle hunt status` issue, 08:00 Saigon time.
+- Status comment on the `Oracle hunt status` issue at 08:00, 14:00 and 20:00
+  Saigon time, with the last attempt's age; a missing comment means the status
+  job stopped.
+- The badge above shows the latest hunt result at a glance.
 - New issue mentioning `@Ch1mpleo` when the instance is up, with its IP.
 - A failed run exits non-zero, so GitHub reports it.
 - Optional chat ping when `OPENBOT_WEBHOOK_SECRET` is set.
