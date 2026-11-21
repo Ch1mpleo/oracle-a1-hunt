@@ -3,11 +3,12 @@
 [![hunt](https://github.com/Ch1mpleo/oracle-a1-hunt/actions/workflows/hunt.yml/badge.svg)](https://github.com/Ch1mpleo/oracle-a1-hunt/actions/workflows/hunt.yml)
 
 Tries to claim an Oracle Always Free Ampere A1 instance in `ap-singapore-1`
-every 15 minutes, from GitHub Actions.
+every 10 minutes, from GitHub Actions.
 
 ## What it asks for
 
-`VM.Standard.A1.Flex`, 2 OCPU / 12 GB, Ubuntu 24.04 ARM, 50 GB boot, named
+`VM.Standard.A1.Flex`, tries 1 OCPU / 6 GB first, then 2 OCPU / 12 GB; override
+the ordered candidates with `SHAPE_CONFIGS="1x6,2x12"`. Ubuntu 24.04 ARM, 50 GB boot, named
 `openbot-vps`. Reuses the `openbot-vcn` / `openbot-subnet` network.
 
 ## Notifications

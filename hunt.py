@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""One attempt to launch an Oracle Always Free Ampere A1 instance from CI.
+"""Launch one Oracle Always Free Ampere A1 instance from CI.
 
-Always exits 0 so the 15-minute schedule cannot spam failure mail.
-Results go to $GITHUB_OUTPUT as: claimed, ip, ad, instance_id, adopted, error.
+Always exits 0 so the 10-minute schedule cannot spam failure mail.
+Results go to $GITHUB_OUTPUT as: claimed, ip, ad, instance_id, adopted,
+ocpus, memory_gb, error, error_detail.
 """
 
 import os
 import pathlib
+import re
 import tempfile
 import time
 
 import oci
 
 SHAPE = "VM.Standard.A1.Flex"
-OCPUS = int(os.environ.get("OCPUS", "2"))
-MEMORY_GB = float(os.environ.get("MEMORY_GB", "12"))
+DEFAULT_SHAPE_CONFIGS = "1x6,2x12"
 NAME = os.environ.get("INSTANCE_NAME", "openbot-vps")
 VCN_NAME = "openbot-vcn"
 SUBNET_NAME = "openbot-subnet"
@@ -33,9 +34,37 @@ def out(**kw):
     if path:
         with open(path, "a", encoding="utf-8") as fh:
             for key, value in kw.items():
-                fh.write(f"{key}={value}\n")
+                value = str(value)
+                if "\n" in value or "\r" in value:
+                    delimiter = f"EOF_{os.getpid()}_{time.time_ns()}"
+                    fh.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
+                else:
+                    fh.write(f"{key}={value}\n")
     for key, value in kw.items():
         log(f"{key}={value}")
+
+
+def parse_shape_configs(value):
+    """Parse an ordered comma-separated list such as ``1x6,2x12``."""
+    configs = []
+    for part in value.split(","):
+        match = re.fullmatch(r"\s*(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*", part)
+        if match is None:
+            raise ValueError(f"invalid SHAPE_CONFIGS entry: {part!r}; expected OCPUxMEMORY_GB")
+        ocpus, memory_gb = int(match.group(1)), float(match.group(2))
+        if ocpus < 1 or memory_gb <= 0:
+            raise ValueError(f"invalid SHAPE_CONFIGS entry: {part!r}; values must be positive")
+        configs.append((ocpus, memory_gb))
+    if not configs:
+        raise ValueError("SHAPE_CONFIGS must contain at least one OCPUxMEMORY_GB config")
+    return configs
+
+
+def oracle_error_detail(exc):
+    headers = getattr(exc, "headers", {}) or {}
+    request_id = getattr(exc, "opc_request_id", None) or headers.get("opc-request-id", "")
+    message = getattr(exc, "message", None) or str(exc)
+    return f"HTTP {getattr(exc, 'status', '')} {getattr(exc, 'code', '')}: {message}; opc-request-id={request_id}"
 
 
 def make_config():
@@ -154,6 +183,7 @@ def ensure_subnet(network, compartment):
 
 
 def main():
+    shape_configs = parse_shape_configs(os.environ.get("SHAPE_CONFIGS", DEFAULT_SHAPE_CONFIGS))
     cfg = make_config()
     tenancy = cfg["tenancy"]
     compartment = os.environ.get("COMPARTMENT") or tenancy
@@ -165,7 +195,10 @@ def main():
     if running is not None:
         ip = public_ip(network, compartment, running.id)
         log(f"instance already {running.lifecycle_state} in {running.availability_domain}")
-        out(claimed="true", adopted="true", ip=ip, ad=running.availability_domain, instance_id=running.id)
+        running_config = getattr(running, "shape_config", None)
+        out(claimed="true", adopted="true", ip=ip, ad=running.availability_domain,
+            instance_id=running.id, ocpus=getattr(running_config, "ocpus", ""),
+            memory_gb=getattr(running_config, "memory_in_gbs", ""), error="", error_detail="")
         return 0
 
     ads = [ad.name for ad in identity.list_availability_domains(tenancy).data]
@@ -186,49 +219,78 @@ def main():
         raise RuntimeError("ssh_key.pub is missing from the repo")
 
     attempts = []
+    launch_errors = []
+    instance = None
+    accepted_config = None
+    accepted_ad = None
     for ad in ads:
-        try:
-            details = oci.core.models.LaunchInstanceDetails(
-                compartment_id=compartment,
-                availability_domain=ad,
-                display_name=NAME,
-                shape=SHAPE,
-                shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
-                    ocpus=OCPUS, memory_in_gbs=MEMORY_GB
-                ),
-                source_details=oci.core.models.InstanceSourceViaImageDetails(
-                    image_id=image.id, boot_volume_size_in_gbs=BOOT_GB
-                ),
-                create_vnic_details=oci.core.models.CreateVnicDetails(
-                    subnet_id=subnet_id, assign_public_ip=True
-                ),
-                metadata={"ssh_authorized_keys": key},
-            )
-            instance = compute.launch_instance(details).data
-            log(f"launch accepted in {ad}: {instance.id}")
-        except oci.exceptions.ServiceError as exc:
-            text = f"{getattr(exc, 'message', '')} {getattr(exc, 'code', '')}".lower()
-            if getattr(exc, "status", 0) in (429, 500) or any(m in text for m in CAPACITY_MARKERS):
-                attempts.append(f"{ad}: no capacity")
-                log(f"{ad}: no capacity ({exc.status} {exc.code})")
-                continue
-            raise
+        for ocpus, memory_gb in shape_configs:
+            for retry in range(2):
+                try:
+                    details = oci.core.models.LaunchInstanceDetails(
+                        compartment_id=compartment,
+                        availability_domain=ad,
+                        display_name=NAME,
+                        shape=SHAPE,
+                        shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
+                            ocpus=ocpus, memory_in_gbs=memory_gb
+                        ),
+                        source_details=oci.core.models.InstanceSourceViaImageDetails(
+                            image_id=image.id, boot_volume_size_in_gbs=BOOT_GB
+                        ),
+                        create_vnic_details=oci.core.models.CreateVnicDetails(
+                            subnet_id=subnet_id, assign_public_ip=True
+                        ),
+                        metadata={"ssh_authorized_keys": key},
+                    )
+                    instance = compute.launch_instance(details).data
+                    accepted_config = (ocpus, memory_gb)
+                    accepted_ad = ad
+                    log(f"launch accepted in {ad} with {ocpus} OCPU/{memory_gb:g} GB: {instance.id}")
+                    break
+                except oci.exceptions.ServiceError as exc:
+                    detail = oracle_error_detail(exc)
+                    log(f"launch failed in {ad} with {ocpus} OCPU/{memory_gb:g} GB: {detail}")
+                    if getattr(exc, "status", 0) == 429:
+                        if retry == 0:
+                            log(f"{ad} {ocpus}x{memory_gb:g}: rate limited; retrying once in 5 seconds")
+                            time.sleep(5)
+                            continue
+                        attempts.append(f"{ad} {ocpus}x{memory_gb:g}: rate limited after retry: {detail}")
+                        launch_errors.append(f"rate limited after retry: {detail}")
+                        break
+                    text = f"{getattr(exc, 'message', '')} {getattr(exc, 'code', '')}".lower()
+                    if any(m in text for m in CAPACITY_MARKERS):
+                        attempts.append(f"{ad} {ocpus}x{memory_gb:g}: {detail}")
+                        break
+                    raise
+            if instance is not None:
+                break
+        if instance is not None:
+            break
 
-        deadline = time.time() + WAIT_SECONDS
-        while time.time() < deadline:
-            current = compute.get_instance(instance.id).data
-            if current.lifecycle_state == "RUNNING":
-                ip = public_ip(network, compartment, instance.id)
-                out(claimed="true", adopted="false", ip=ip, ad=ad, instance_id=instance.id)
-                return 0
-            if current.lifecycle_state in ("TERMINATED", "TERMINATING"):
-                raise RuntimeError("instance terminated during provisioning")
-            time.sleep(6)
-        out(claimed="true", adopted="false", ip="", ad=ad, instance_id=instance.id)
+    if instance is None:
+        detail = "; ".join(attempts)
+        log("no launch accepted: " + (detail or "no availability domains or candidates"))
+        out(claimed="false", adopted="false", ip="", ad="", instance_id="",
+            ocpus="", memory_gb="", error="; ".join(launch_errors), error_detail=detail)
         return 0
 
-    log("no capacity: " + "; ".join(attempts))
-    out(claimed="false", adopted="false", ip="", ad="", instance_id="")
+    ad = accepted_ad
+    ocpus, memory_gb = accepted_config
+    deadline = time.time() + WAIT_SECONDS
+    while time.time() < deadline:
+        current = compute.get_instance(instance.id).data
+        if current.lifecycle_state == "RUNNING":
+            ip = public_ip(network, compartment, instance.id)
+            out(claimed="true", adopted="false", ip=ip, ad=ad, instance_id=instance.id,
+                ocpus=ocpus, memory_gb=memory_gb, error="", error_detail="")
+            return 0
+        if current.lifecycle_state in ("TERMINATED", "TERMINATING"):
+            raise RuntimeError("instance terminated during provisioning")
+        time.sleep(6)
+    out(claimed="true", adopted="false", ip="", ad=ad, instance_id=instance.id,
+        ocpus=ocpus, memory_gb=memory_gb, error="", error_detail="instance did not reach RUNNING before timeout")
     return 0
 
 
@@ -239,5 +301,7 @@ if __name__ == "__main__":
         raise
     except Exception as exc:  # noqa: BLE001
         log(f"ERROR {type(exc).__name__}: {exc}")
-        out(claimed="false", adopted="false", ip="", ad="", instance_id="", error=f"{type(exc).__name__}: {exc}")
+        detail = oracle_error_detail(exc) if isinstance(exc, oci.exceptions.ServiceError) else f"{type(exc).__name__}: {exc}"
+        out(claimed="false", adopted="false", ip="", ad="", instance_id="", ocpus="",
+            memory_gb="", error=detail, error_detail=detail)
         raise SystemExit(0)
