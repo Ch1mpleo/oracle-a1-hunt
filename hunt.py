@@ -219,51 +219,54 @@ def main():
         raise RuntimeError("ssh_key.pub is missing from the repo")
 
     attempts = []
-    launch_errors = []
     instance = None
     accepted_config = None
     accepted_ad = None
     for ad in ads:
-        for ocpus, memory_gb in shape_configs:
-            for retry in range(2):
-                try:
-                    details = oci.core.models.LaunchInstanceDetails(
-                        compartment_id=compartment,
-                        availability_domain=ad,
-                        display_name=NAME,
-                        shape=SHAPE,
-                        shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
-                            ocpus=ocpus, memory_in_gbs=memory_gb
-                        ),
-                        source_details=oci.core.models.InstanceSourceViaImageDetails(
-                            image_id=image.id, boot_volume_size_in_gbs=BOOT_GB
-                        ),
-                        create_vnic_details=oci.core.models.CreateVnicDetails(
-                            subnet_id=subnet_id, assign_public_ip=True
-                        ),
-                        metadata={"ssh_authorized_keys": key},
-                    )
-                    instance = compute.launch_instance(details).data
-                    accepted_config = (ocpus, memory_gb)
-                    accepted_ad = ad
-                    log(f"launch accepted in {ad} with {ocpus} OCPU/{memory_gb:g} GB: {instance.id}")
-                    break
-                except oci.exceptions.ServiceError as exc:
-                    detail = oracle_error_detail(exc)
-                    log(f"launch failed in {ad} with {ocpus} OCPU/{memory_gb:g} GB: {detail}")
-                    if getattr(exc, "status", 0) == 429:
-                        if retry == 0:
-                            log(f"{ad} {ocpus}x{memory_gb:g}: rate limited; retrying once in 5 seconds")
-                            time.sleep(5)
-                            continue
-                        attempts.append(f"{ad} {ocpus}x{memory_gb:g}: rate limited after retry: {detail}")
-                        launch_errors.append(f"rate limited after retry: {detail}")
-                        break
-                    text = f"{getattr(exc, 'message', '')} {getattr(exc, 'code', '')}".lower()
-                    if any(m in text for m in CAPACITY_MARKERS):
-                        attempts.append(f"{ad} {ocpus}x{memory_gb:g}: {detail}")
-                        break
-                    raise
+        for config_index, (ocpus, memory_gb) in enumerate(shape_configs):
+            try:
+                details = oci.core.models.LaunchInstanceDetails(
+                    compartment_id=compartment,
+                    availability_domain=ad,
+                    display_name=NAME,
+                    shape=SHAPE,
+                    shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
+                        ocpus=ocpus, memory_in_gbs=memory_gb
+                    ),
+                    source_details=oci.core.models.InstanceSourceViaImageDetails(
+                        image_id=image.id, boot_volume_size_in_gbs=BOOT_GB
+                    ),
+                    create_vnic_details=oci.core.models.CreateVnicDetails(
+                        subnet_id=subnet_id, assign_public_ip=True
+                    ),
+                    metadata={"ssh_authorized_keys": key},
+                )
+                instance = compute.launch_instance(details).data
+                accepted_config = (ocpus, memory_gb)
+                accepted_ad = ad
+                log(f"launch accepted in {ad} with {ocpus} OCPU/{memory_gb:g} GB: {instance.id}")
+                break
+            except oci.exceptions.ServiceError as exc:
+                detail = oracle_error_detail(exc)
+                log(f"launch failed in {ad} with {ocpus} OCPU/{memory_gb:g} GB: {detail}")
+                if getattr(exc, "status", 0) == 429:
+                    throttled = f"throttled: {detail}"
+                    log(throttled)
+                    out(claimed="false", adopted="false", ip="", ad="", instance_id="",
+                        ocpus=ocpus, memory_gb=memory_gb, error="", error_detail=throttled)
+                    return 0
+                text = f"{getattr(exc, 'message', '')} {getattr(exc, 'code', '')}".lower()
+                if any(m in text for m in CAPACITY_MARKERS):
+                    attempts.append(f"{ad} {ocpus}x{memory_gb:g}: {detail}")
+                    if (
+                        (ocpus, memory_gb) == (1, 6)
+                        and config_index + 1 < len(shape_configs)
+                        and shape_configs[config_index + 1] == (2, 12)
+                    ):
+                        log(f"{ad}: capacity unavailable for 1x6; waiting 90 seconds before 2x12")
+                        time.sleep(90)
+                    continue
+                raise
             if instance is not None:
                 break
         if instance is not None:
@@ -273,7 +276,7 @@ def main():
         detail = "; ".join(attempts)
         log("no launch accepted: " + (detail or "no availability domains or candidates"))
         out(claimed="false", adopted="false", ip="", ad="", instance_id="",
-            ocpus="", memory_gb="", error="; ".join(launch_errors), error_detail=detail)
+            ocpus="", memory_gb="", error="", error_detail=detail)
         return 0
 
     ad = accepted_ad
