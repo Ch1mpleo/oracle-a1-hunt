@@ -1,11 +1,11 @@
 name: Oracle A1 hunt
 
-# Every 15 minutes GitHub's servers try once for Ampere A1 capacity in
+# Every 10 minutes GitHub's servers try for Ampere A1 capacity in
 # ap-singapore-1. No laptop needed. Costs nothing on a public repo.
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -58,16 +58,27 @@ jobs:
 
       - name: Summarize
         if: steps.cred.outputs.ready == 'true'
+        env:
+          CLAIMED: ${{ steps.hunt.outputs.claimed }}
+          IP: ${{ steps.hunt.outputs.ip }}
+          AD: ${{ steps.hunt.outputs.ad }}
+          OCPUS: ${{ steps.hunt.outputs.ocpus }}
+          MEMORY_GB: ${{ steps.hunt.outputs.memory_gb }}
+          ERROR: ${{ steps.hunt.outputs.error }}
+          ERROR_DETAIL: ${{ steps.hunt.outputs.error_detail }}
         run: |
           {
             echo "### Oracle A1 hunt"
             echo ""
             echo "| field | value |"
             echo "|---|---|"
-            echo "| claimed | ${{ steps.hunt.outputs.claimed }} |"
-            echo "| public IP | ${{ steps.hunt.outputs.ip }} |"
-            echo "| availability domain | ${{ steps.hunt.outputs.ad }} |"
-            echo "| error | ${{ steps.hunt.outputs.error }} |"
+            echo "| claimed | $CLAIMED |"
+            echo "| public IP | $IP |"
+            echo "| availability domain | $AD |"
+            echo "| OCPU | $OCPUS |"
+            echo "| memory GB | $MEMORY_GB |"
+            echo "| error | $ERROR |"
+            echo "| error detail | $ERROR_DETAIL |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open an issue with the IP
