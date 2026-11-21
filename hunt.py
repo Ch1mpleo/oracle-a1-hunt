@@ -219,6 +219,7 @@ def main():
         raise RuntimeError("ssh_key.pub is missing from the repo")
 
     attempts = []
+    launch_errors = []
     instance = None
     accepted_config = None
     accepted_ad = None
@@ -256,9 +257,10 @@ def main():
                             time.sleep(5)
                             continue
                         attempts.append(f"{ad} {ocpus}x{memory_gb:g}: rate limited after retry: {detail}")
+                        launch_errors.append(f"rate limited after retry: {detail}")
                         break
                     text = f"{getattr(exc, 'message', '')} {getattr(exc, 'code', '')}".lower()
-                    if getattr(exc, "status", 0) == 500 or any(m in text for m in CAPACITY_MARKERS):
+                    if any(m in text for m in CAPACITY_MARKERS):
                         attempts.append(f"{ad} {ocpus}x{memory_gb:g}: {detail}")
                         break
                     raise
@@ -271,7 +273,7 @@ def main():
         detail = "; ".join(attempts)
         log("no launch accepted: " + (detail or "no availability domains or candidates"))
         out(claimed="false", adopted="false", ip="", ad="", instance_id="",
-            ocpus="", memory_gb="", error="", error_detail=detail)
+            ocpus="", memory_gb="", error="; ".join(launch_errors), error_detail=detail)
         return 0
 
     ad = accepted_ad
@@ -299,7 +301,7 @@ if __name__ == "__main__":
         raise
     except Exception as exc:  # noqa: BLE001
         log(f"ERROR {type(exc).__name__}: {exc}")
-        detail = f"{type(exc).__name__}: {exc}"
+        detail = oracle_error_detail(exc) if isinstance(exc, oci.exceptions.ServiceError) else f"{type(exc).__name__}: {exc}"
         out(claimed="false", adopted="false", ip="", ad="", instance_id="", ocpus="",
             memory_gb="", error=detail, error_detail=detail)
         raise SystemExit(0)
